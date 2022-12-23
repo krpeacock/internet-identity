@@ -193,6 +193,13 @@ pub struct InternetIdentityStats {
 pub struct ArchiveInfo {
     pub archive_canister: Option<Principal>,
     pub expected_wasm_hash: Option<[u8; 32]>,
+    // Buffered archive entries limit. If reached, II will stop accepting new anchor operations
+    // until the buffered operations are acknowledged by the archive.
+    pub entries_buffer_limit: u64,
+    // Polling interval at which the archive should fetch buffered archive entries from II (in nanoseconds).
+    pub polling_interval_ns: u64,
+    // Max number of archive entries to be fetched in a single call.
+    pub entries_fetch_limit: u16,
 }
 
 #[derive(Clone, Debug, CandidType, Deserialize)]

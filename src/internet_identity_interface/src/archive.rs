@@ -20,6 +20,15 @@ pub enum Operation {
     RemoveDevice { device: PublicKey },
 }
 
+/// Encoded entry as buffered on the II side (until acknowledged by the archive).
+#[derive(Eq, PartialEq, Clone, CandidType, Debug, Deserialize)]
+pub struct BufferedEntry {
+    pub anchor_number: AnchorNumber,
+    pub timestamp: u64,
+    pub entry: ByteBuf,
+    pub sequence_number: u64,
+}
+
 #[derive(Eq, PartialEq, Clone, Debug, CandidType, Deserialize)]
 pub struct Entry {
     // store anchor in LogEntry, such that anchor operations can be attributed to an anchor without consulting the index.
@@ -99,4 +108,5 @@ pub enum Cursor {
 pub struct ArchiveInit {
     pub ii_canister: Principal,
     pub max_entries_per_call: u16,
+    pub polling_interval: u64,
 }

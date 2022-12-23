@@ -496,6 +496,7 @@ fn encode_config(authorized_principal: Principal) -> Vec<u8> {
     let config = ArchiveInit {
         ii_canister: authorized_principal,
         max_entries_per_call: 10,
+        polling_interval: Duration::from_secs(10).as_nanos() as u64,
     };
     candid::encode_one(config).expect("error encoding II installation arg as candid")
 }

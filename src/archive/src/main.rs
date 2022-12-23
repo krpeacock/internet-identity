@@ -42,7 +42,8 @@ use ic_cdk::api::management_canister::main::{
 };
 use ic_cdk::api::stable::stable64_size;
 use ic_cdk::api::time;
-use ic_cdk::{caller, id, trap};
+use ic_cdk::timer::set_timer_interval;
+use ic_cdk::{caller, id, print, trap};
 use ic_cdk_macros::{init, post_upgrade, query, update};
 use ic_metrics_encoder::MetricsEncoder;
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager, VirtualMemory};
@@ -152,6 +153,8 @@ struct ArchiveConfig {
     max_entries_per_call: u16,
     /// Timestamp of the last install / upgrade of this canister.
     last_upgrade_timestamp: Timestamp,
+    /// Polling interval to fetch new entries from II
+    polling_interval: u64,
 }
 
 impl Storable for ConfigState {
@@ -376,7 +379,9 @@ fn initialize(arg: ArchiveInit) {
         ii_canister: arg.ii_canister,
         max_entries_per_call: arg.max_entries_per_call,
         last_upgrade_timestamp: time(),
+        polling_interval: arg.polling_interval,
     });
+    set_timer_interval(Duration::from_secs(10), poll_for_entries);
 }
 
 fn write_config(config: ArchiveConfig) {
@@ -477,6 +482,11 @@ fn encode_metrics(w: &mut MetricsEncoder<Vec<u8>>) -> std::io::Result<()> {
         "Number of stable memory pages used by this canister.",
     )?;
     Ok(())
+}
+
+fn poll_for_entries() {
+    print(&format!("I have been called at time {}", time()));
+    trap("help I trapped");
 }
 
 /// Publicly exposes the status of the archive canister.

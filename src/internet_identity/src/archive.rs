@@ -8,12 +8,13 @@ use ic_cdk::api::management_canister::main::{
     InstallCodeArgument,
 };
 use ic_cdk::api::time;
-use ic_cdk::{id, notify};
+use ic_cdk::{caller, id, trap};
 use internet_identity_interface::archive::*;
 use internet_identity_interface::*;
 use serde_bytes::ByteBuf;
 use sha2::Digest;
 use sha2::Sha256;
+use std::rc::Rc;
 use std::time::Duration;
 use ArchiveState::{Created, CreationInProgress, NotCreated};
 use CanisterInstallMode::Upgrade;
@@ -21,6 +22,12 @@ use CanisterInstallMode::Upgrade;
 #[derive(Clone, Debug, Default, CandidType, Deserialize, Eq, PartialEq)]
 pub struct ArchiveInfo {
     pub expected_module_hash: Option<[u8; 32]>,
+    // The max number of entries allowed in entries_buffer.
+    pub entries_buffer_limit: u64,
+    // Polling interval at which the archive should poll II in nanoseconds.
+    pub polling_interval_ns: u64,
+    // Max number of entries to be fetched in a single call.
+    pub entries_fetch_limit: u16,
     pub state: ArchiveState,
 }
 
@@ -46,6 +53,12 @@ pub struct ArchiveData {
     pub sequence_number: u64,
     // Canister id of the archive canister
     pub archive_canister: Principal,
+    // Entries to be fetched by the archive canister sorted in ascending order by sequence_number.
+    // Once the limit has been reached, II will refuse further changes to anchors in stable memory
+    // until the archive acknowledges entries and they can safely be deleted from this buffer.
+    // The limit is configurable (entries_buffer_limit).
+    // This is an Rc to avoid unnecessary copies of potentially a lot of data when cloning.
+    pub entries_buffer: Rc<Vec<BufferedEntry>>,
 }
 
 /// Cached archive status information
@@ -151,6 +164,7 @@ async fn create_archive() -> Result<Principal, String> {
                 persistent_state.archive_info.state = Created(ArchiveData {
                     sequence_number: 0,
                     archive_canister: canister_id,
+                    entries_buffer: Rc::new(vec![]),
                 })
             });
             Ok(canister_id)
@@ -196,6 +210,7 @@ async fn install_archive(
     let settings = ArchiveInit {
         ii_canister: id(),
         max_entries_per_call: 1000,
+        polling_interval: Duration::from_secs(10).as_nanos() as u64,
     };
     let encoded_arg = candid::encode_one(settings)
         .map_err(|err| format!("failed to encode archive install argument: {:?}", err))?;
@@ -267,15 +282,55 @@ pub fn archive_operation(anchor_number: AnchorNumber, caller: Principal, operati
     };
     let encoded_entry = candid::encode_one(entry).expect("failed to encode archive entry");
 
-    // Notify can still trap if the message cannot be enqueued rolling back the anchor operation.
-    // Therefore we only increment the sequence number after notifying successfully.
-    let () = notify(
-        archive_data.archive_canister,
-        "write_entry",
-        (anchor_number, timestamp, encoded_entry),
-    )
-    .expect("failed to send archive entry notification");
+    // add entry to buffer (which is emptied by the archive periodically, see fetch_entries and acknowledge entries)
+    state::archive_data_mut(|data| {
+        Rc::make_mut(&mut data.entries_buffer).push(BufferedEntry {
+            anchor_number,
+            timestamp,
+            entry: ByteBuf::from(encoded_entry),
+            sequence_number: archive_data.sequence_number,
+        })
+    });
+
     state::increment_archive_seq_nr();
+}
+
+pub fn fetch_entries() -> Vec<BufferedEntry> {
+    let archive_info = state::persistent_state(|ps| ps.archive_info.clone());
+
+    let Created(data) = archive_info.state.clone() else {
+        trap("no archive deployed!");
+    };
+    trap_if_caller_not_archive(&data);
+
+    // buffered entries are ordered by sequence number
+    // i.e. this takes the lowest entries_fetch_limit many entries
+    data.entries_buffer
+        .iter()
+        .take(archive_info.entries_fetch_limit as usize)
+        .cloned()
+        .collect()
+}
+
+pub fn acknowledge_entries(sequence_number: u64) -> () {
+    state::persistent_state_mut(|ps| {
+        let Created(ref mut data) = ps.archive_info.state else {
+            trap("no archive deployed!");
+        };
+        trap_if_caller_not_archive(data);
+
+        // Only keep entries with higher sequence number as the highest acknowledged.
+        Rc::make_mut(&mut data.entries_buffer).retain(|e| e.sequence_number > sequence_number)
+    });
+}
+
+fn trap_if_caller_not_archive(data: &ArchiveData) {
+    if caller() != data.archive_canister {
+        trap(&format!(
+            "only the archive canister {} is allowed to fetch entries",
+            data.archive_canister
+        ))
+    };
 }
 
 pub fn device_diff(old: &Device, new: &Device) -> DeviceDataUpdate {

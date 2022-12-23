@@ -152,6 +152,12 @@ fn encode_metrics(w: &mut MetricsEncoder<Vec<u8>>) -> std::io::Result<()> {
                 "internet_identity_archive_sequence_number",
                 data.sequence_number as f64,
                 "The number of entries written to the archive.",
+            )?;
+
+            w.encode_gauge(
+                "internet_identity_buffered_archive_entries",
+                data.entries_buffer.len() as f64,
+                "The number of buffered archive entries.",
             )
         } else {
             Ok(())

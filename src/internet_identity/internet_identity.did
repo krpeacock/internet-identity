@@ -194,6 +194,13 @@ type DeployArchiveResult = variant {
     failed: text;
 };
 
+type BufferedArchiveEntry = record {
+    anchor_number: UserNumber;
+    timestamp: Timestamp;
+    sequence_number: nat64;
+    entry: blob;
+};
+
 service : (opt InternetIdentityInit) -> {
     init_salt: () -> ();
     create_challenge : () -> (Challenge);
@@ -219,4 +226,6 @@ service : (opt InternetIdentityInit) -> {
     http_request: (request: HttpRequest) -> (HttpResponse) query;
 
     deploy_archive: (wasm: blob) -> (DeployArchiveResult);
+    fetch_entries: () -> (vec BufferedArchiveEntry);
+    acknowledge_entries: (sequence_number: nat64) -> ();
 }

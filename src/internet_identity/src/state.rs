@@ -236,6 +236,18 @@ pub fn archive_data() -> Option<ArchiveData> {
     })
 }
 
+pub fn archive_data_mut<R>(f: impl FnOnce(&mut ArchiveData) -> R) -> R {
+    STATE.with(|s| {
+        if let ArchiveState::Created(ref mut data) =
+            s.persistent_state.borrow_mut().archive_info.state
+        {
+            f(data)
+        } else {
+            trap("no archive deployed")
+        }
+    })
+}
+
 pub fn increment_archive_seq_nr() {
     STATE.with(|s| {
         if let ArchiveState::Created(ref mut data) =
