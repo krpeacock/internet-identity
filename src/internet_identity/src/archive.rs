@@ -272,6 +272,13 @@ pub fn archive_operation(anchor_number: AnchorNumber, caller: Principal, operati
         Some(data) => data,
         None => return,
     };
+
+    state::persistent_state(|ps| {
+        if archive_data.entries_buffer.len() >= ps.archive_info.entries_buffer_limit {
+            trap("cannot archive operation, archive entries buffer limit reached")
+        }
+    });
+
     let timestamp = time();
     let entry = Entry {
         anchor: anchor_number,
