@@ -1,12 +1,10 @@
 use canister_tests::api::archive as api;
 use canister_tests::framework::*;
-use ic_cdk::api::management_canister::main::CanisterId;
 use internet_identity_interface::archive::*;
 use internet_identity_interface::*;
 use regex::Regex;
-use serde_bytes::ByteBuf;
+use state_machine_client::CallError;
 use state_machine_client::ErrorCode::CanisterCalledTrap;
-use state_machine_client::{CallError, StateMachine};
 use std::time::{Duration, SystemTime};
 
 /// Verifies that the canister can be installed successfully.
@@ -51,7 +49,7 @@ fn should_expose_status() -> Result<(), CallError> {
     let env = env();
     let canister_id = install_archive_canister(&env, ARCHIVE_WASM.clone());
     let status = api::status(&env, canister_id)?;
-    assert_eq!(status.cycles, 0);
+    assert_eq!(status.canister_status.cycles, 0);
     Ok(())
 }
 
@@ -156,7 +154,7 @@ mod write_tests {
         assert_metric(
             &get_metrics(&env, canister_id),
             "ii_archive_entries_count{source=\"log\"}",
-            2,
+            2f64,
         );
         Ok(())
     }
@@ -456,6 +454,8 @@ mod read_tests {
         let config = candid::encode_one(ArchiveInit {
             ii_canister: principal_1(),
             max_entries_per_call: 1000,
+            polling_interval_ns: Duration::from_secs(1).as_nanos() as u64,
+            error_buffer_limit: 1,
         })
         .unwrap();
         let canister_id = env.create_canister();
@@ -510,6 +510,8 @@ mod metrics_tests {
             "ii_archive_virtual_memory_pages{kind=\"log_data\"}",
             "ii_archive_virtual_memory_pages{kind=\"anchor_index\"}",
             "ii_archive_stable_memory_pages",
+            "ii_archive_last_successful_fetch_timestamp_seconds",
+            "ii_archive_last_successful_fetch_entries_count",
         ];
         let env = env();
         env.advance_time(Duration::from_secs(300)); // advance time to see it reflected on the metrics endpoint
@@ -539,7 +541,7 @@ mod metrics_tests {
             env.time()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
-                .as_secs(),
+                .as_secs_f64(),
         );
         println!("{}", get_metrics(&env, canister_id));
 
@@ -553,7 +555,7 @@ mod metrics_tests {
             env.time()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
-                .as_secs(),
+                .as_secs_f64(),
         );
         Ok(())
     }
@@ -569,7 +571,7 @@ mod metrics_tests {
         let env = env();
         let canister_id = install_archive_canister(&env, ARCHIVE_WASM.clone());
         for metric in metrics.clone() {
-            assert_metric(&get_metrics(&env, canister_id), metric, 0);
+            assert_metric(&get_metrics(&env, canister_id), metric, 0f64);
         }
 
         api::add_entry(
@@ -582,7 +584,7 @@ mod metrics_tests {
         )?;
 
         for metric in metrics {
-            assert_metric(&get_metrics(&env, canister_id), metric, 1);
+            assert_metric(&get_metrics(&env, canister_id), metric, 1f64);
         }
         Ok(())
     }
@@ -590,8 +592,8 @@ mod metrics_tests {
     /// Verifies that the log sizes are updated correctly.
     #[test]
     fn should_update_log_size_metrics() -> Result<(), CallError> {
-        const INDEX_OVERHEAD: u64 = 40;
-        const DATA_OVERHEAD: u64 = 32;
+        const INDEX_OVERHEAD: f64 = 40f64;
+        const DATA_OVERHEAD: f64 = 32f64;
 
         let env = env();
         let canister_id = install_archive_canister(&env, ARCHIVE_WASM.clone());
@@ -608,7 +610,7 @@ mod metrics_tests {
         );
 
         let entry = candid::encode_one(log_entry_1()).expect("failed to encode entry");
-        let entry_size = entry.len() as u64;
+        let entry_size = entry.len() as f64;
         api::add_entry(
             &env,
             canister_id,
@@ -621,7 +623,7 @@ mod metrics_tests {
         assert_metric(
             &get_metrics(&env, canister_id),
             "ii_archive_log_bytes{type=\"index\"}",
-            INDEX_OVERHEAD + 8, // 8 bytes per entry
+            INDEX_OVERHEAD + 8f64, // 8 bytes per entry
         );
         assert_metric(
             &get_metrics(&env, canister_id),
@@ -643,22 +645,22 @@ mod metrics_tests {
         assert_metric(
             &get_metrics(&env, canister_id),
             "ii_archive_virtual_memory_pages{kind=\"log_index\"}",
-            1,
+            1f64,
         );
         assert_metric(
             &get_metrics(&env, canister_id),
             "ii_archive_virtual_memory_pages{kind=\"log_data\"}",
-            1,
+            1f64,
         );
         assert_metric(
             &get_metrics(&env, canister_id),
             "ii_archive_virtual_memory_pages{kind=\"anchor_index\"}",
-            1,
+            1f64,
         );
         assert_metric(
             &get_metrics(&env, canister_id),
             "ii_archive_stable_memory_pages",
-            3074, // the memory_manager pre-allocates a lot of memory (1000 page buckets per virtual memory and some overhead)
+            3074f64, // the memory_manager pre-allocates a lot of memory (1000 page buckets per virtual memory and some overhead)
         );
 
         api::add_entry(
@@ -673,22 +675,22 @@ mod metrics_tests {
         assert_metric(
             &get_metrics(&env, canister_id),
             "ii_archive_virtual_memory_pages{kind=\"log_index\"}",
-            1, // does not change because the index additions are small
+            1f64, // does not change because the index additions are small
         );
         assert_metric(
             &get_metrics(&env, canister_id),
             "ii_archive_virtual_memory_pages{kind=\"log_data\"}",
-            2,
+            2f64,
         );
         assert_metric(
             &get_metrics(&env, canister_id),
             "ii_archive_virtual_memory_pages{kind=\"anchor_index\"}",
-            1, // does not change because the index additions are small
+            1f64, // does not change because the index additions are small
         );
         assert_metric(
             &get_metrics(&env, canister_id),
             "ii_archive_stable_memory_pages",
-            3074, // does not change due to pre-allocation
+            3074f64, // does not change due to pre-allocation
         );
 
         Ok(())
@@ -783,19 +785,4 @@ mod stable_memory_tests {
             &delete_entry
         );
     }
-}
-
-pub fn get_metrics(env: &StateMachine, canister_id: CanisterId) -> String {
-    let response = api::http_request(
-        env,
-        canister_id,
-        HttpRequest {
-            method: "GET".to_string(),
-            url: "/metrics".to_string(),
-            headers: vec![],
-            body: ByteBuf::new(),
-        },
-    )
-    .expect("HTTP request to /metrics failed");
-    String::from_utf8_lossy(&response.body).to_string()
 }
